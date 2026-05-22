@@ -1364,7 +1364,6 @@ export default function App() {
         @keyframes sparkleTwinkle { 0%,100% { transform: scale(1) rotate(0deg); opacity: 0.85; } 50% { transform: scale(1.15) rotate(15deg); opacity: 1; } }
       `}</style>
 
-      <SceneBackground />
       <StarField scrollY={scrollY} />
       {screen !== "onboarding" && <AmbientToggle playing={ambient.playing} onToggle={ambient.toggle} />}
 
