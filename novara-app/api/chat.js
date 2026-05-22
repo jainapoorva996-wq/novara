@@ -1,4 +1,42 @@
-// Novara — Gemini chat proxy (Vercel serverless function)
+// Novara — Gemini chat proxy with auto-retry + model fallback
+const PRIMARY_MODEL = "gemini-2.5-flash";
+const FALLBACK_MODEL = "gemini-2.0-flash";
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 600;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function callGemini(model, body, apiKey) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  return fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function callWithRetry(model, body, apiKey) {
+  let lastResponse;
+  let lastData;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const upstream = await callGemini(model, body, apiKey);
+    if (upstream.ok) return { ok: true, data: await upstream.json() };
+
+    lastResponse = upstream;
+    lastData = await upstream.json().catch(() => ({}));
+
+    // Retry on overload / rate limit
+    if (upstream.status === 503 || upstream.status === 429) {
+      if (attempt < MAX_RETRIES) {
+        await sleep(RETRY_DELAY_MS * (attempt + 1));
+        continue;
+      }
+    }
+    break; // non-retryable error
+  }
+  return { ok: false, status: lastResponse.status, data: lastData };
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -35,22 +73,23 @@ export default async function handler(req, res) {
       body.systemInstruction = { parts: [{ text: system }] };
     }
 
-    const model = "gemini-2.5-flash";
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    // Try primary model with retries
+    let result = await callWithRetry(PRIMARY_MODEL, body, apiKey);
 
-    const upstream = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-    const data = await upstream.json();
-
-    if (!upstream.ok) {
-      console.error("Gemini upstream error:", JSON.stringify(data));
-      return res.status(upstream.status).json({ error: data?.error?.message || "Upstream error" });
+    // Fallback to secondary model if primary keeps failing
+    if (!result.ok && (result.status === 503 || result.status === 429)) {
+      console.warn(`Primary model ${PRIMARY_MODEL} overloaded, falling back to ${FALLBACK_MODEL}`);
+      result = await callWithRetry(FALLBACK_MODEL, body, apiKey);
     }
 
+    if (!result.ok) {
+      console.error("Gemini upstream error:", JSON.stringify(result.data));
+      return res
+        .status(result.status)
+        .json({ error: result.data?.error?.message || "Upstream error" });
+    }
+
+    const data = result.data;
     const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
     if (!reply) {
