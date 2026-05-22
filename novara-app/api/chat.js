@@ -25,13 +25,14 @@ export default async function handler(req, res) {
     const body = {
       contents,
       generationConfig: {
-        maxOutputTokens: 1000,
+        maxOutputTokens: 2048,
         temperature: 0.85,
+        thinkingConfig: { thinkingBudget: 0 },
       },
     };
 
     if (system) {
-      body.system_instruction = { parts: [{ text: system }] };
+      body.systemInstruction = { parts: [{ text: system }] };
     }
 
     const model = "gemini-2.5-flash";
@@ -46,11 +47,18 @@ export default async function handler(req, res) {
     const data = await upstream.json();
 
     if (!upstream.ok) {
-      console.error("Gemini upstream error:", data);
+      console.error("Gemini upstream error:", JSON.stringify(data));
       return res.status(upstream.status).json({ error: data?.error?.message || "Upstream error" });
     }
 
     const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+    if (!reply) {
+      console.error("Gemini returned empty reply. Full response:", JSON.stringify(data));
+      const finish = data?.candidates?.[0]?.finishReason || "UNKNOWN";
+      return res.status(200).json({ reply: "", error: `Empty response (finishReason: ${finish})` });
+    }
+
     return res.status(200).json({ reply });
   } catch (err) {
     console.error("Chat proxy error:", err);
