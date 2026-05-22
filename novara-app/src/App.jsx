@@ -76,6 +76,36 @@ const getDailyTarotCard = (date = new Date()) => {
   return TAROT_DECK[Math.abs(hash) % TAROT_DECK.length];
 };
 
+// Format an ISO date string (yyyy-mm-dd) as a friendly "Nov 12, 1995"
+const formatBirthDate = (iso) => {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso + "T00:00:00");
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  } catch { return ""; }
+};
+// Format a 24h "HH:MM" time string as "3:45 AM"
+const formatBirthTime = (t) => {
+  if (!t) return "";
+  const [hStr, mStr] = t.split(":");
+  const h = parseInt(hStr, 10);
+  if (isNaN(h)) return "";
+  const ampm = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 || 12;
+  return `${h12}:${mStr} ${ampm}`;
+};
+// Build a one-line "Born Nov 12, 1995 · 3:45 AM · Mumbai" summary, gracefully omitting missing parts
+const formatBirthSummary = (b) => {
+  if (!b) return "Birth details not entered";
+  const parts = [];
+  const d = formatBirthDate(b.dob);
+  const t = formatBirthTime(b.birthTime);
+  if (d) parts.push(d);
+  if (t) parts.push(t);
+  if (b.birthPlace) parts.push(b.birthPlace);
+  return parts.length ? "Born " + parts.join(" · ") : "Birth details not entered";
+};
 // Time-of-day gradient — black anchors so the nebula clouds pop on top
 const getTimeGradient = (hour = new Date().getHours()) => {
   if (hour >= 5 && hour < 8)  return "linear-gradient(165deg, #1a0f24 0%, #08050f 40%, #000000 100%)"; // dawn
@@ -678,11 +708,14 @@ const AmbientToggle = ({ playing, onToggle }) => (
 // SCREENS
 // ─────────────────────────────────────────────────────────────
 
-const OnboardingScreen = ({ onNext }) => {
+const OnboardingScreen = ({ onNext, birthData, setBirthData }) => {
   const [step, setStep] = useState(0);
-  const [dob, setDob] = useState("");
-  const [birthTime, setBirthTime] = useState("");
-  const [birthPlace, setBirthPlace] = useState("");
+  const dob = birthData.dob;
+  const birthTime = birthData.birthTime;
+  const birthPlace = birthData.birthPlace;
+  const setDob = (v) => setBirthData(b => ({ ...b, dob: v }));
+  const setBirthTime = (v) => setBirthData(b => ({ ...b, birthTime: v }));
+  const setBirthPlace = (v) => setBirthData(b => ({ ...b, birthPlace: v }));
   const haptic = useHaptic();
 
   const steps = [
@@ -904,7 +937,7 @@ const HomeScreen = ({ onNavigate, gradient }) => {
   );
 };
 
-const ChartScreen = () => {
+const ChartScreen = ({ birthData }) => {
   const placements = [
     { planet: "Sun",     sign: "Scorpio", house: "8th",  symbol: "☀", color: COLORS.gold },
     { planet: "Moon",    sign: "Pisces",  house: "12th", symbol: "☽", color: COLORS.lavender },
@@ -919,7 +952,7 @@ const ChartScreen = () => {
       <GrainOverlay />
       <div style={{ position: "relative", zIndex: 1 }}>
         <h2 style={{ fontFamily: FONTS.serif, fontSize: 28, color: COLORS.ivory, margin: "0 0 4px", fontWeight: 400 }}>Your Natal Chart</h2>
-        <p style={{ fontFamily: FONTS.sans, fontSize: 12, color: COLORS.moonBeige, opacity: 0.5, margin: "0 0 28px", letterSpacing: "0.04em" }}>Born Nov 12 · 3:45 AM · Mumbai, India</p>
+        <p style={{ fontFamily: FONTS.sans, fontSize: 12, color: COLORS.moonBeige, opacity: 0.5, margin: "0 0 28px", letterSpacing: "0.04em" }}>{formatBirthSummary(birthData)}</p>
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 28 }}>
           <div style={{
             width: 220, height: 220, borderRadius: "50%",
@@ -1244,7 +1277,12 @@ const MoonScreen = () => {
   );
 };
 
-const ProfileScreen = () => (
+const ProfileScreen = ({ birthData }) => {
+  const birthDateStr = formatBirthDate(birthData?.dob);
+  const birthTimeStr = formatBirthTime(birthData?.birthTime);
+  const birthDataValue = [birthDateStr, birthTimeStr].filter(Boolean).join(" · ") || "Not entered";
+  const birthPlaceValue = birthData?.birthPlace || "Not entered";
+  return (
   <div style={{ minHeight: "100vh", padding: "52px 24px 90px", position: "relative" }}>
     <GrainOverlay />
     <div style={{ position: "relative", zIndex: 1 }}>
@@ -1261,8 +1299,8 @@ const ProfileScreen = () => (
       </div>
       {[
         { label: "Subscription", value: "Novara Pro", highlight: true },
-        { label: "Birth Data", value: "Nov 12, 1995 · 3:45 AM" },
-        { label: "Birth Place", value: "Mumbai, India" },
+        { label: "Birth Data", value: birthDataValue },
+        { label: "Birth Place", value: birthPlaceValue },
         { label: "Notifications", value: "Daily at sunrise" },
         { label: "Theme", value: "Cosmic Night" },
       ].map((item, i) => (
@@ -1296,7 +1334,8 @@ const ProfileScreen = () => (
       </div>
     </div>
   </div>
-);
+  );
+};
 
 // ─────────────────────────────────────────────────────────────
 // APP
@@ -1317,6 +1356,18 @@ export default function App() {
   const chime = useChime();
   const ambient = useAmbient();
   const [gradient, setGradient] = useState(() => getTimeGradient());
+
+  // Birth data — persisted to localStorage so it survives refresh
+  const [birthData, setBirthData] = useState(() => {
+    try {
+      const saved = typeof localStorage !== "undefined" && localStorage.getItem("novara_birthData");
+      if (saved) return JSON.parse(saved);
+    } catch (e) { /* fall through */ }
+    return { dob: "", birthTime: "", birthPlace: "" };
+  });
+  useEffect(() => {
+    try { localStorage.setItem("novara_birthData", JSON.stringify(birthData)); } catch (e) {}
+  }, [birthData]);
 
   // Update time-of-day gradient every minute
   useEffect(() => {
@@ -1369,16 +1420,16 @@ export default function App() {
 
       <div style={{ maxWidth: 430, margin: "0 auto", minHeight: "100vh", position: "relative", zIndex: 1 }}>
         {screen === "onboarding" ? (
-          <OnboardingScreen onNext={() => navigateTo("home")} />
+          <OnboardingScreen onNext={() => navigateTo("home")} birthData={birthData} setBirthData={setBirthData} />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
             <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", paddingBottom: 70 }}>
               {screen === "home"    && <HomeScreen onNavigate={navigateTo} gradient={gradient} />}
-              {screen === "chart"   && <ChartScreen />}
+              {screen === "chart"   && <ChartScreen birthData={birthData} />}
               {screen === "tarot"   && <TarotScreen onReflect={handleReflectOnCard} />}
               {screen === "chat"    && <ChatScreen seed={chatSeed} />}
               {screen === "moon"    && <MoonScreen />}
-              {screen === "profile" && <ProfileScreen />}
+              {screen === "profile" && <ProfileScreen birthData={birthData} />}
             </div>
 
             <nav style={{
