@@ -1080,7 +1080,6 @@ Weave astrological insight with emotional reflection. Reference their chart plac
     setLoading(false);
     setTimeout(() => endRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
   };
-
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", position: "relative" }}>
       <div style={{ padding: "52px 24px 16px", background: `linear-gradient(160deg, #2a1f3d 0%, #1e1a2e 100%)`, position: "relative", zIndex: 1 }}>
